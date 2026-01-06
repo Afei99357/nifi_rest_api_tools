@@ -1,0 +1,24 @@
+# NiFi Processor Usage Analyzer Configuration
+#
+# Copy this file to config.yaml and fill in your values:
+#   cp config.example.yaml config.yaml
+#
+# Then edit config.yaml with your NiFi connection details.
+# DO NOT commit config.yaml to version control (it contains credentials!)
+
+# NiFi connection details
+nifi_url: https://nifi.company.com:8443/nifi
+username: admin
+password: your-password-here
+
+# Process group to analyze
+# Find this in NiFi UI: right-click process group → "Copy ID"
+process_group_id: abc-123-your-process-group-id-here
+
+# Analysis parameters
+days_back: 30              # Number of days to look back for provenance events
+max_events: 10000          # Maximum events to fetch per processor
+verify_ssl: false          # Set to true if you have valid SSL certificates
+
+# Output customization (optional)
+# output_prefix: processor_usage_custom_name
