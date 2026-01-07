@@ -119,10 +119,16 @@ class ProcessorUsageAnalyzer:
                 total=len(self.target_processors)
             )
 
-            for proc in self.target_processors:
+            for index, proc in enumerate(self.target_processors, 1):
                 processor_id = proc['id']
                 proc_name = proc['component']['name']
                 proc_type = proc['component']['type'].split('.')[-1]
+
+                # Update progress to show current processor
+                progress.update(
+                    task,
+                    description=f"Fetching: {proc_name} ({index}/{len(self.target_processors)})"
+                )
 
                 try:
                     # Query with date range
