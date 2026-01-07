@@ -160,7 +160,7 @@ Examples:
     username = args.username or config.get('username')
     password = args.password or config.get('password')
     group_id = args.group_id or config.get('process_group_id')
-    days_back = args.days if args.days != 30 else int(config.get('days_back', 30))
+    days_back = args.days if args.days != 1 else int(config.get('days_back', 1))
     verify_ssl = not args.no_verify_ssl and config.get('verify_ssl', 'false').lower() != 'false'
 
     # Validate required parameters
