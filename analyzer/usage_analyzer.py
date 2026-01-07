@@ -91,7 +91,7 @@ class ProcessorUsageAnalyzer:
 
         try:
             self.target_processors = self.client.list_processors(process_group_id)
-            self.console.print(f"[green]✓[/green] Found {len(self.target_processors)} processors")
+            self.console.print(f"[green]OK[/green] Found {len(self.target_processors)} processors")
 
             # Display processor list (first 10)
             if self.target_processors:
@@ -106,7 +106,7 @@ class ProcessorUsageAnalyzer:
                     )
 
         except Exception as e:
-            self.console.print(f"[red]✗[/red] Failed to get processors: {e}")
+            self.console.print(f"[red]ERROR[/red] Failed to get processors: {e}")
             raise
 
         # Phase 1.5: Get processor execution counts (fast, single API call)
@@ -122,7 +122,7 @@ class ProcessorUsageAnalyzer:
 
             if len(exec_stats) == 0 and len(self.target_processors) > 0:
                 self.console.print(
-                    f"[yellow]⚠[/yellow] Retrieved execution counts for {len(exec_stats)} processors "
+                    f"[yellow]WARNING[/yellow] Retrieved execution counts for {len(exec_stats)} processors "
                     f"(expected {len(self.target_processors)})"
                 )
                 self.console.print(
@@ -130,10 +130,10 @@ class ProcessorUsageAnalyzer:
                 )
             else:
                 self.console.print(
-                    f"[green]✓[/green] Retrieved execution counts for {len(exec_stats)} processors"
+                    f"[green]OK[/green] Retrieved execution counts for {len(exec_stats)} processors"
                 )
         except Exception as e:
-            self.console.print(f"[red]✗[/red] Failed to fetch execution counts: {e}")
+            self.console.print(f"[red]ERROR[/red] Failed to fetch execution counts: {e}")
             raise  # Cannot continue without this data
 
         # Phase 2: Query provenance per processor (optional, based on execution_only flag)
@@ -184,7 +184,7 @@ class ProcessorUsageAnalyzer:
                         progress.advance(task)
 
                     except Exception as e:
-                        self.console.print(f"[yellow]⚠[/yellow]  Failed for {proc_name}: {e}")
+                        self.console.print(f"[yellow]WARNING[/yellow]  Failed for {proc_name}: {e}")
                         self.processor_event_counts[proc_name] = {
                             'id': processor_id,
                             'flowfiles_count': 0,
@@ -194,7 +194,7 @@ class ProcessorUsageAnalyzer:
                         progress.advance(task)
 
             self.console.print(
-                f"[green]✓[/green] Found provenance for {len(self.processor_event_counts)} processors"
+                f"[green]OK[/green] Found provenance for {len(self.processor_event_counts)} processors"
             )
         else:
             # Execution-only mode: skip provenance, just use execution counts
@@ -215,7 +215,7 @@ class ProcessorUsageAnalyzer:
                 }
 
             self.console.print(
-                f"[green]✓[/green] Skipped provenance, using execution counts only"
+                f"[green]OK[/green] Skipped provenance, using execution counts only"
             )
 
     def generate_report(self, output_prefix: Optional[str] = None) -> None:
@@ -265,7 +265,7 @@ class ProcessorUsageAnalyzer:
                 else:
                     writer.writerow([name, data['type'], data['invocations'], data['flowfiles_count']])
 
-        self.console.print(f"[green]✓[/green] Saved CSV: {csv_file}")
+        self.console.print(f"[green]OK[/green] Saved CSV: {csv_file}")
 
         # 2. Generate bar chart
         fig, ax = plt.subplots(figsize=(14 if not self.execution_only else 12, max(8, len(self.target_processors) * 0.4)))
@@ -311,7 +311,7 @@ class ProcessorUsageAnalyzer:
 
         plot_file = Path(f"{output_prefix}.png")
         plt.savefig(plot_file, dpi=150, bbox_inches='tight')
-        self.console.print(f"[green]✓[/green] Saved plot: {plot_file}")
+        self.console.print(f"[green]OK[/green] Saved plot: {plot_file}")
 
         # Close the figure to free memory
         plt.close(fig)
@@ -333,7 +333,7 @@ class ProcessorUsageAnalyzer:
         # Show pruning candidates
         if unused_count > 0:
             self.console.print(
-                f"\n[yellow]⚠ Processors with 0 executions (candidates for pruning):[/yellow]"
+                f"\n[yellow]WARNING: Processors with 0 executions (candidates for pruning):[/yellow]"
             )
             for name, data in sorted_processors:
                 if data['invocations'] == 0:
@@ -344,13 +344,13 @@ class ProcessorUsageAnalyzer:
             low_usage_count = sum(1 for _, data in sorted_processors if 0 < data['invocations'] < 10)
             if low_usage_count > 0:
                 self.console.print(
-                    f"\n[orange]⚠ Processors with low execution count (<10 invocations):[/orange]"
+                    f"\n[yellow]WARNING: Processors with low execution count (<10 invocations):[/yellow]"
                 )
                 for name, data in sorted_processors:
                     if 0 < data['invocations'] < 10:
                         self.console.print(f"  • {name} ({data['type']}): {data['invocations']} executions")
 
-        self.console.print(f"\n[green]✓[/green] Analysis complete!")
+        self.console.print(f"\n[green]OK[/green] Analysis complete!")
         self.console.print(f"\n[cyan]Next steps:[/cyan]")
         self.console.print(f"  1. Review the bar chart: {plot_file}")
         self.console.print(f"  2. Review the CSV: {csv_file}")

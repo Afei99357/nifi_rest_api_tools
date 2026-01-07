@@ -203,7 +203,7 @@ Examples:
             password=password,
             verify_ssl=verify_ssl
         )
-        console.print("[green]✓[/green] Connected successfully")
+        console.print("[green]OK[/green] Connected successfully")
 
         # Create analyzer
         analyzer = ProcessorUsageAnalyzer(
@@ -222,7 +222,7 @@ Examples:
         # Cleanup
         client.close()
 
-        console.print("\n[green]✓[/green] Done!")
+        console.print("\n[green]OK[/green] Done!")
         sys.exit(0)
 
     except NiFiAuthError as e:
