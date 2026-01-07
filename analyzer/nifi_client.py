@@ -287,9 +287,17 @@ class NiFiClient:
         status_data = self.get_process_group_status(group_id)
         processor_stats = {}
 
+        # Log the top-level keys for debugging
+        logger.debug(f"Status data keys: {list(status_data.keys())}")
+
         # Extract processor stats from current group
         pg_status = status_data.get("processGroupStatus", {})
-        for proc_status in pg_status.get("processorStatus", []):
+
+        # Check if we got processor status data
+        proc_status_list = pg_status.get("processorStatus", [])
+        logger.debug(f"Found {len(proc_status_list)} processors in current group status")
+
+        for proc_status in proc_status_list:
             proc_id = proc_status["id"]
             proc_name = proc_status["name"]
             proc_type = proc_status["type"].split('.')[-1]
@@ -302,11 +310,15 @@ class NiFiClient:
             }
 
         # Recursively get from child process groups
-        for child_pg_status in pg_status.get("processGroupStatus", []):
+        child_groups = pg_status.get("processGroupStatus", [])
+        logger.debug(f"Found {len(child_groups)} child process groups")
+
+        for child_pg_status in child_groups:
             child_id = child_pg_status["id"]
             child_stats = self.get_processor_invocation_counts(child_id)
             processor_stats.update(child_stats)
 
+        logger.debug(f"Total processor stats collected: {len(processor_stats)}")
         return processor_stats
 
     def query_provenance(
