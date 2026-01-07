@@ -161,6 +161,7 @@ Examples:
     password = args.password or config.get('password')
     group_id = args.group_id or config.get('process_group_id')
     days_back = args.days if args.days != 1 else int(config.get('days_back', 1))
+    max_events = args.max_events if args.max_events != 10000 else int(config.get('max_events', 10000))
     verify_ssl = not args.no_verify_ssl and config.get('verify_ssl', 'false').lower() != 'false'
 
     # Validate required parameters
@@ -190,7 +191,7 @@ Examples:
     console.print(f"  Execution-only mode: {args.execution_only}")
     if not args.execution_only:
         console.print(f"  Days back (provenance): {days_back}")
-        console.print(f"  Max events per processor: {args.max_events}")
+        console.print(f"  Max events per processor: {max_events}")
     console.print(f"  Verify SSL: {verify_ssl}")
 
     try:
@@ -208,7 +209,7 @@ Examples:
         analyzer = ProcessorUsageAnalyzer(
             client=client,
             days_back=days_back,
-            max_events_per_processor=args.max_events,
+            max_events_per_processor=max_events,
             execution_only=args.execution_only
         )
 

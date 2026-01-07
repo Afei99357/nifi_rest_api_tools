@@ -16,8 +16,8 @@ password: your-password-here
 process_group_id: abc-123-your-process-group-id-here
 
 # Analysis parameters
-days_back: 30              # Number of days to look back for provenance events
-max_events: 10000          # Maximum events to fetch per processor
+days_back: 1               # Number of days to look back for provenance events (default: 1)
+max_events: 10000          # Maximum events to fetch per processor (default: 10000)
 verify_ssl: false          # Set to true if you have valid SSL certificates
 
 # Output customization (optional)
