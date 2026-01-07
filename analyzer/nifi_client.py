@@ -261,6 +261,54 @@ class NiFiClient:
 
         return processors
 
+    def get_process_group_status(self, group_id: str) -> Dict[str, Any]:
+        """
+        Get live execution statistics for all processors in a process group.
+
+        Args:
+            group_id: Process group ID (use 'root' for root group)
+
+        Returns:
+            Process group status data with processor execution counts
+        """
+        response = self._request("GET", f"/flow/process-groups/{group_id}/status")
+        return response.json()
+
+    def get_processor_invocation_counts(self, group_id: str) -> Dict[str, Dict[str, Any]]:
+        """
+        Extract invocation counts for all processors in a process group (recursive).
+
+        Args:
+            group_id: Process group ID
+
+        Returns:
+            Dictionary mapping processor ID to {name, type, invocations}
+        """
+        status_data = self.get_process_group_status(group_id)
+        processor_stats = {}
+
+        # Extract processor stats from current group
+        pg_status = status_data.get("processGroupStatus", {})
+        for proc_status in pg_status.get("processorStatus", []):
+            proc_id = proc_status["id"]
+            proc_name = proc_status["name"]
+            proc_type = proc_status["type"].split('.')[-1]
+            invocations = proc_status.get("aggregateSnapshot", {}).get("invocations", 0)
+
+            processor_stats[proc_id] = {
+                "name": proc_name,
+                "type": proc_type,
+                "invocations": invocations
+            }
+
+        # Recursively get from child process groups
+        for child_pg_status in pg_status.get("processGroupStatus", []):
+            child_id = child_pg_status["id"]
+            child_stats = self.get_processor_invocation_counts(child_id)
+            processor_stats.update(child_stats)
+
+        return processor_stats
+
     def query_provenance(
         self,
         processor_id: Optional[str] = None,

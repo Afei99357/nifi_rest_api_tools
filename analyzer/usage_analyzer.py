@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import matplotlib.pyplot as plt
+import numpy as np
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
@@ -19,27 +20,32 @@ from .nifi_client import NiFiClient
 
 class ProcessorUsageAnalyzer:
     """
-    Analyzes processor execution frequency based on provenance events.
+    Analyzes processor execution frequency based on provenance events and execution counts.
 
-    This class queries NiFi provenance data to determine how often each processor
-    in a process group has executed over a specified time period. Results are
-    used to identify candidates for pruning (unused or rarely-used processors).
+    This class queries NiFi provenance data and processor status to determine:
+    1. Execution count (total invocations since processor creation)
+    2. FlowFiles processed (optional, over specified time period)
+
+    Results are used to identify candidates for pruning (unused or rarely-used processors).
 
     Args:
         client: Initialized NiFiClient instance
-        days_back: Number of days to look back for provenance events (default: 30)
+        days_back: Number of days to look back for provenance events (default: 1)
         max_events_per_processor: Maximum events to fetch per processor (default: 10000)
+        execution_only: If True, skip provenance queries for faster results (default: False)
     """
 
     def __init__(
         self,
         client: NiFiClient,
-        days_back: int = 30,
-        max_events_per_processor: int = 10000
+        days_back: int = 1,
+        max_events_per_processor: int = 10000,
+        execution_only: bool = False
     ):
         self.client = client
         self.days_back = days_back
         self.max_events_per_processor = max_events_per_processor
+        self.execution_only = execution_only
         self.console = Console()
 
         # Analysis results (populated by analyze())
@@ -47,6 +53,7 @@ class ProcessorUsageAnalyzer:
         self.start_date: Optional[datetime] = None
         self.end_date: Optional[datetime] = None
         self.processor_event_counts: Dict[str, Dict] = {}
+        self.processor_invocation_counts: Dict[str, int] = {}
         self.target_processors: List[Dict] = []
 
     def analyze(self, process_group_id: str) -> None:
@@ -102,63 +109,105 @@ class ProcessorUsageAnalyzer:
             self.console.print(f"[red]✗[/red] Failed to get processors: {e}")
             raise
 
-        # Phase 3: Query provenance per processor
+        # Phase 1.5: Get processor execution counts (fast, single API call)
         self.console.print(
-            f"\n[yellow]Phase 2:[/yellow] Querying provenance (past {self.days_back} days)..."
+            f"\n[yellow]Phase 1.5:[/yellow] Fetching execution statistics..."
         )
 
+        try:
+            exec_stats = self.client.get_processor_invocation_counts(process_group_id)
+            # Store invocation counts by processor ID
+            for proc_id, stats in exec_stats.items():
+                self.processor_invocation_counts[proc_id] = stats['invocations']
+
+            self.console.print(
+                f"[green]✓[/green] Retrieved execution counts for {len(exec_stats)} processors"
+            )
+        except Exception as e:
+            self.console.print(f"[red]✗[/red] Failed to fetch execution counts: {e}")
+            raise  # Cannot continue without this data
+
+        # Phase 2: Query provenance per processor (optional, based on execution_only flag)
         self.processor_event_counts = {}
 
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=self.console
-        ) as progress:
-            task = progress.add_task(
-                f"Fetching events for {len(self.target_processors)} processors...",
-                total=len(self.target_processors)
+        if not self.execution_only:
+            self.console.print(
+                f"\n[yellow]Phase 2:[/yellow] Querying provenance (past {self.days_back} day(s))..."
             )
 
-            for index, proc in enumerate(self.target_processors, 1):
-                processor_id = proc['id']
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=self.console
+            ) as progress:
+                task = progress.add_task(
+                    f"Fetching events for {len(self.target_processors)} processors...",
+                    total=len(self.target_processors)
+                )
+
+                for index, proc in enumerate(self.target_processors, 1):
+                    processor_id = proc['id']
+                    proc_name = proc['component']['name']
+                    proc_type = proc['component']['type'].split('.')[-1]
+
+                    # Update progress to show current processor
+                    progress.update(
+                        task,
+                        description=f"Fetching: {proc_name} ({index}/{len(self.target_processors)})"
+                    )
+
+                    try:
+                        # Query with date range
+                        events = self.client.query_provenance(
+                            processor_id=processor_id,
+                            start_date=self.start_date,
+                            end_date=self.end_date,
+                            max_events=self.max_events_per_processor
+                        )
+
+                        self.processor_event_counts[proc_name] = {
+                            'id': processor_id,
+                            'flowfiles_count': len(events),
+                            'invocations': self.processor_invocation_counts.get(processor_id, 0),
+                            'type': proc_type
+                        }
+
+                        progress.advance(task)
+
+                    except Exception as e:
+                        self.console.print(f"[yellow]⚠[/yellow]  Failed for {proc_name}: {e}")
+                        self.processor_event_counts[proc_name] = {
+                            'id': processor_id,
+                            'flowfiles_count': 0,
+                            'invocations': self.processor_invocation_counts.get(processor_id, 0),
+                            'type': proc_type
+                        }
+                        progress.advance(task)
+
+            self.console.print(
+                f"[green]✓[/green] Found provenance for {len(self.processor_event_counts)} processors"
+            )
+        else:
+            # Execution-only mode: skip provenance, just use execution counts
+            self.console.print(
+                f"\n[yellow]Phase 2:[/yellow] Skipping provenance (execution-only mode)"
+            )
+
+            for proc in self.target_processors:
+                proc_id = proc['id']
                 proc_name = proc['component']['name']
                 proc_type = proc['component']['type'].split('.')[-1]
 
-                # Update progress to show current processor
-                progress.update(
-                    task,
-                    description=f"Fetching: {proc_name} ({index}/{len(self.target_processors)})"
-                )
+                self.processor_event_counts[proc_name] = {
+                    'id': proc_id,
+                    'invocations': self.processor_invocation_counts.get(proc_id, 0),
+                    'flowfiles_count': None,
+                    'type': proc_type
+                }
 
-                try:
-                    # Query with date range
-                    events = self.client.query_provenance(
-                        processor_id=processor_id,
-                        start_date=self.start_date,
-                        end_date=self.end_date,
-                        max_events=self.max_events_per_processor
-                    )
-
-                    self.processor_event_counts[proc_name] = {
-                        'id': processor_id,
-                        'count': len(events),
-                        'type': proc_type
-                    }
-
-                    progress.advance(task)
-
-                except Exception as e:
-                    self.console.print(f"[yellow]⚠[/yellow]  Failed for {proc_name}: {e}")
-                    self.processor_event_counts[proc_name] = {
-                        'id': processor_id,
-                        'count': 0,
-                        'type': proc_type
-                    }
-                    progress.advance(task)
-
-        self.console.print(
-            f"[green]✓[/green] Found provenance for {len(self.processor_event_counts)} processors"
-        )
+            self.console.print(
+                f"[green]✓[/green] Skipped provenance, using execution counts only"
+            )
 
     def generate_report(self, output_prefix: Optional[str] = None) -> None:
         """
@@ -188,7 +237,7 @@ class ProcessorUsageAnalyzer:
         # Sort by execution count (highest to lowest)
         sorted_processors = sorted(
             self.processor_event_counts.items(),
-            key=lambda x: x[1]['count'],
+            key=lambda x: x[1]['invocations'],
             reverse=True
         )
 
@@ -196,31 +245,57 @@ class ProcessorUsageAnalyzer:
         csv_file = Path(f"{output_prefix}.csv")
         with open(csv_file, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(['Processor Name', 'Processor Type', 'Event Count', 'Events per Day'])
+            if self.execution_only:
+                writer.writerow(['Processor Name', 'Processor Type', 'Execution Count (Total)'])
+            else:
+                writer.writerow(['Processor Name', 'Processor Type', 'Execution Count (Total)', f'FlowFiles Processed ({self.days_back}d)'])
+
             for name, data in sorted_processors:
-                events_per_day = data['count'] / self.days_back
-                writer.writerow([name, data['type'], data['count'], f"{events_per_day:.1f}"])
+                if self.execution_only:
+                    writer.writerow([name, data['type'], data['invocations']])
+                else:
+                    writer.writerow([name, data['type'], data['invocations'], data['flowfiles_count']])
 
         self.console.print(f"[green]✓[/green] Saved CSV: {csv_file}")
 
         # 2. Generate bar chart
-        fig, ax = plt.subplots(figsize=(12, max(6, len(self.target_processors) * 0.3)))
+        fig, ax = plt.subplots(figsize=(14 if not self.execution_only else 12, max(8, len(self.target_processors) * 0.4)))
 
         names = [name for name, _ in sorted_processors]
-        counts = [data['count'] for _, data in sorted_processors]
+        invocations = [data['invocations'] for _, data in sorted_processors]
 
-        # Color bars: red for 0 events (unused), orange for low usage (<10), green for active
-        colors = ['red' if c == 0 else 'orange' if c < 10 else 'green' for c in counts]
+        if self.execution_only:
+            # Single bar chart (execution count only)
+            colors = ['red' if i == 0 else 'orange' if i < 10 else 'steelblue' for i in invocations]
+            ax.barh(names, invocations, color=colors)
+            ax.set_xlabel('Execution Count (Total)', fontsize=12)
+            ax.set_title(
+                f'Processor Execution Count\n'
+                f'Process Group: {self.process_group_id[:16] if self.process_group_id else "unknown"}...',
+                fontsize=14,
+                fontweight='bold'
+            )
+        else:
+            # Grouped bar chart (execution count + FlowFiles)
+            flowfiles = [data['flowfiles_count'] for _, data in sorted_processors]
+            x = np.arange(len(names))
+            width = 0.35
 
-        ax.barh(names, counts, color=colors)
-        ax.set_xlabel('Number of Provenance Events', fontsize=12)
+            bars1 = ax.barh(x - width/2, invocations, width, label='Execution Count (Total)', color='steelblue')
+            bars2 = ax.barh(x + width/2, flowfiles, width, label=f'FlowFiles ({self.days_back}d)', color='lightcoral')
+
+            ax.set_yticks(x)
+            ax.set_yticklabels(names)
+            ax.set_xlabel('Count', fontsize=12)
+            ax.set_title(
+                f'Processor Usage: Executions vs FlowFiles\n'
+                f'Process Group: {self.process_group_id[:16] if self.process_group_id else "unknown"}...',
+                fontsize=14,
+                fontweight='bold'
+            )
+            ax.legend()
+
         ax.set_ylabel('Processor Name', fontsize=12)
-        ax.set_title(
-            f'Processor Execution Frequency - Past {self.days_back} Days\n'
-            f'Process Group: {self.process_group_id[:16] if self.process_group_id else "unknown"}...',
-            fontsize=14,
-            fontweight='bold'
-        )
         ax.grid(axis='x', alpha=0.3, linestyle='--')
 
         plt.tight_layout()
@@ -233,33 +308,38 @@ class ProcessorUsageAnalyzer:
         plt.close(fig)
 
         # 3. Print summary
-        total_events = sum(data['count'] for _, data in sorted_processors)
-        unused_count = sum(1 for _, data in sorted_processors if data['count'] == 0)
-        low_usage_count = sum(1 for _, data in sorted_processors if 0 < data['count'] < 10)
+        total_invocations = sum(data['invocations'] for _, data in sorted_processors)
+        unused_count = sum(1 for _, data in sorted_processors if data['invocations'] == 0)
 
         self.console.print(f"\n[cyan]Summary:[/cyan]")
         self.console.print(f"  Total processors: {len(self.target_processors)}")
-        self.console.print(f"  Total events: {total_events:,}")
-        self.console.print(f"  Date range: {self.days_back} days")
-        self.console.print(f"  Unused processors (0 events): {unused_count}")
-        self.console.print(f"  Low usage processors (<10 events): {low_usage_count}")
+        self.console.print(f"  Total executions (all time): {total_invocations:,}")
+
+        if not self.execution_only:
+            total_flowfiles = sum(data['flowfiles_count'] for _, data in sorted_processors)
+            self.console.print(f"  Total FlowFiles (past {self.days_back} day(s)): {total_flowfiles:,}")
+
+        self.console.print(f"  Never executed: {unused_count} processors")
 
         # Show pruning candidates
         if unused_count > 0:
             self.console.print(
-                f"\n[yellow]⚠ Processors with 0 events (candidates for pruning):[/yellow]"
+                f"\n[yellow]⚠ Processors with 0 executions (candidates for pruning):[/yellow]"
             )
             for name, data in sorted_processors:
-                if data['count'] == 0:
+                if data['invocations'] == 0:
                     self.console.print(f"  • {name} ({data['type']})")
 
-        if low_usage_count > 0:
-            self.console.print(
-                f"\n[orange]⚠ Processors with low usage (<10 events):[/orange]"
-            )
-            for name, data in sorted_processors:
-                if 0 < data['count'] < 10:
-                    self.console.print(f"  • {name} ({data['type']}): {data['count']} events")
+        # Show low usage processors (only in full mode)
+        if not self.execution_only:
+            low_usage_count = sum(1 for _, data in sorted_processors if 0 < data['invocations'] < 10)
+            if low_usage_count > 0:
+                self.console.print(
+                    f"\n[orange]⚠ Processors with low execution count (<10 invocations):[/orange]"
+                )
+                for name, data in sorted_processors:
+                    if 0 < data['invocations'] < 10:
+                        self.console.print(f"  • {name} ({data['type']}): {data['invocations']} executions")
 
         self.console.print(f"\n[green]✓[/green] Analysis complete!")
         self.console.print(f"\n[cyan]Next steps:[/cyan]")

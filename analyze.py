@@ -109,8 +109,8 @@ Examples:
     parser.add_argument(
         '--days',
         type=int,
-        default=30,
-        help='Number of days to look back (default: 30)'
+        default=1,
+        help='Number of days to look back for provenance (default: 1, ignored if --execution-only)'
     )
     parser.add_argument(
         '--max-events',
@@ -122,6 +122,11 @@ Examples:
         '--no-verify-ssl',
         action='store_true',
         help='Disable SSL certificate verification'
+    )
+    parser.add_argument(
+        '--execution-only',
+        action='store_true',
+        help='Show execution count only (skip provenance queries for faster results)'
     )
     parser.add_argument(
         '--config',
@@ -182,8 +187,10 @@ Examples:
     console.print(f"  NiFi URL: {nifi_url}")
     console.print(f"  Username: {username}")
     console.print(f"  Process Group ID: {group_id[:16]}...")
-    console.print(f"  Days back: {days_back}")
-    console.print(f"  Max events per processor: {args.max_events}")
+    console.print(f"  Execution-only mode: {args.execution_only}")
+    if not args.execution_only:
+        console.print(f"  Days back (provenance): {days_back}")
+        console.print(f"  Max events per processor: {args.max_events}")
     console.print(f"  Verify SSL: {verify_ssl}")
 
     try:
@@ -201,7 +208,8 @@ Examples:
         analyzer = ProcessorUsageAnalyzer(
             client=client,
             days_back=days_back,
-            max_events_per_processor=args.max_events
+            max_events_per_processor=args.max_events,
+            execution_only=args.execution_only
         )
 
         # Run analysis
