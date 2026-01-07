@@ -120,9 +120,18 @@ class ProcessorUsageAnalyzer:
             for proc_id, stats in exec_stats.items():
                 self.processor_invocation_counts[proc_id] = stats['invocations']
 
-            self.console.print(
-                f"[green]✓[/green] Retrieved execution counts for {len(exec_stats)} processors"
-            )
+            if len(exec_stats) == 0 and len(self.target_processors) > 0:
+                self.console.print(
+                    f"[yellow]⚠[/yellow] Retrieved execution counts for {len(exec_stats)} processors "
+                    f"(expected {len(self.target_processors)})"
+                )
+                self.console.print(
+                    f"[yellow]Hint:[/yellow] Run with --verbose to see detailed API response structure"
+                )
+            else:
+                self.console.print(
+                    f"[green]✓[/green] Retrieved execution counts for {len(exec_stats)} processors"
+                )
         except Exception as e:
             self.console.print(f"[red]✗[/red] Failed to fetch execution counts: {e}")
             raise  # Cannot continue without this data

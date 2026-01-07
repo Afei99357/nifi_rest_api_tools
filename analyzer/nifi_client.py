@@ -288,37 +288,59 @@ class NiFiClient:
         processor_stats = {}
 
         # Log the top-level keys for debugging
-        logger.debug(f"Status data keys: {list(status_data.keys())}")
+        logger.debug(f"Status data top-level keys: {list(status_data.keys())}")
 
         # Extract processor stats from current group
         pg_status = status_data.get("processGroupStatus", {})
 
+        if not pg_status:
+            logger.warning(f"No 'processGroupStatus' key in response for group {group_id}")
+            logger.warning(f"Response structure: {status_data}")
+            return processor_stats
+
+        logger.debug(f"processGroupStatus keys: {list(pg_status.keys())}")
+
         # Check if we got processor status data
         proc_status_list = pg_status.get("processorStatus", [])
-        logger.debug(f"Found {len(proc_status_list)} processors in current group status")
+        logger.debug(f"Found {len(proc_status_list)} processors in current group {group_id[:8]}")
+
+        # Log first processor structure if available
+        if proc_status_list and logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"First processor status keys: {list(proc_status_list[0].keys())}")
 
         for proc_status in proc_status_list:
-            proc_id = proc_status["id"]
-            proc_name = proc_status["name"]
-            proc_type = proc_status["type"].split('.')[-1]
-            invocations = proc_status.get("aggregateSnapshot", {}).get("invocations", 0)
+            try:
+                proc_id = proc_status["id"]
+                proc_name = proc_status["name"]
+                proc_type = proc_status["type"].split('.')[-1]
+                invocations = proc_status.get("aggregateSnapshot", {}).get("invocations", 0)
 
-            processor_stats[proc_id] = {
-                "name": proc_name,
-                "type": proc_type,
-                "invocations": invocations
-            }
+                processor_stats[proc_id] = {
+                    "name": proc_name,
+                    "type": proc_type,
+                    "invocations": invocations
+                }
+                logger.debug(f"  Processor: {proc_name} - {invocations} invocations")
+            except KeyError as e:
+                logger.error(f"Missing key in processor status: {e}")
+                logger.error(f"Processor status structure: {proc_status}")
 
         # Recursively get from child process groups
         child_groups = pg_status.get("processGroupStatus", [])
-        logger.debug(f"Found {len(child_groups)} child process groups")
+        logger.debug(f"Found {len(child_groups)} child process groups in {group_id[:8]}")
 
         for child_pg_status in child_groups:
-            child_id = child_pg_status["id"]
-            child_stats = self.get_processor_invocation_counts(child_id)
-            processor_stats.update(child_stats)
+            try:
+                child_id = child_pg_status["id"]
+                child_name = child_pg_status.get("name", "unknown")
+                logger.debug(f"Recursing into child group: {child_name} ({child_id[:8]})")
+                child_stats = self.get_processor_invocation_counts(child_id)
+                processor_stats.update(child_stats)
+                logger.debug(f"Added {len(child_stats)} processors from child group {child_name}")
+            except Exception as e:
+                logger.error(f"Error processing child group: {e}")
 
-        logger.debug(f"Total processor stats collected: {len(processor_stats)}")
+        logger.info(f"Group {group_id[:8]}: collected {len(processor_stats)} total processor stats")
         return processor_stats
 
     def query_provenance(
