@@ -107,26 +107,9 @@ Examples:
         help='Process group ID to analyze'
     )
     parser.add_argument(
-        '--days',
-        type=int,
-        default=1,
-        help='Number of days to look back for provenance (default: 1, ignored if --execution-only)'
-    )
-    parser.add_argument(
-        '--max-events',
-        type=int,
-        default=10000,
-        help='Maximum events per processor (default: 10000)'
-    )
-    parser.add_argument(
         '--no-verify-ssl',
         action='store_true',
         help='Disable SSL certificate verification'
-    )
-    parser.add_argument(
-        '--execution-only',
-        action='store_true',
-        help='Show execution count only (skip provenance queries for faster results)'
     )
     parser.add_argument(
         '--config',
@@ -160,8 +143,6 @@ Examples:
     username = args.username or config.get('username')
     password = args.password or config.get('password')
     group_id = args.group_id or config.get('process_group_id')
-    days_back = args.days if args.days != 1 else int(config.get('days_back', 1))
-    max_events = args.max_events if args.max_events != 10000 else int(config.get('max_events', 10000))
     verify_ssl = not args.no_verify_ssl and config.get('verify_ssl', 'false').lower() != 'false'
 
     # Validate required parameters
@@ -188,10 +169,6 @@ Examples:
     console.print(f"  NiFi URL: {nifi_url}")
     console.print(f"  Username: {username}")
     console.print(f"  Process Group ID: {group_id[:16]}...")
-    console.print(f"  Execution-only mode: {args.execution_only}")
-    if not args.execution_only:
-        console.print(f"  Days back (provenance): {days_back}")
-        console.print(f"  Max events per processor: {max_events}")
     console.print(f"  Verify SSL: {verify_ssl}")
 
     try:
@@ -206,12 +183,7 @@ Examples:
         console.print("[green]OK[/green] Connected successfully")
 
         # Create analyzer
-        analyzer = ProcessorUsageAnalyzer(
-            client=client,
-            days_back=days_back,
-            max_events_per_processor=max_events,
-            execution_only=args.execution_only
-        )
+        analyzer = ProcessorUsageAnalyzer(client=client)
 
         # Run analysis
         analyzer.analyze(group_id)

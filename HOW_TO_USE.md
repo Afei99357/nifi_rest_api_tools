@@ -18,12 +18,13 @@ Complete step-by-step guide for analyzing processor usage in your NiFi flows.
 
 ## What This Tool Does
 
-This tool connects to your Apache NiFi instance and analyzes how often each processor in a process group has executed over a time period (default: 30 days). It helps you:
+This tool connects to your Apache NiFi instance and analyzes processor execution counts (total invocations since creation). It helps you:
 
-- **Identify unused processors** (0 executions) - candidates for removal
-- **Find low-usage processors** (<10 executions) - may need review
+- **Identify unused processors** (0 executions since creation) - candidates for removal
+- **Find low-usage processors** (<10 total executions) - may need review
 - **Visualize processor activity** - color-coded bar chart
 - **Generate reports** - CSV file for detailed analysis
+- **Fast analysis** - ~5-10 seconds using NiFi Status API
 
 ---
 
@@ -123,9 +124,7 @@ password: your-password-here                     # ← Your NiFi password
 # Process group to analyze
 process_group_id: abc-123-your-process-group-id  # ← Paste the ID you copied from NiFi
 
-# Analysis parameters
-days_back: 30              # How many days to look back (30 is a good start)
-max_events: 10000          # Maximum events per processor (10000 is usually enough)
+# SSL verification
 verify_ssl: false          # Set to true if you have valid SSL certificates
 ```
 
@@ -148,7 +147,7 @@ python3 analyze.py
 That's it! The tool will:
 1. Connect to NiFi
 2. Get all processors in your target group
-3. Query provenance for each processor
+3. Query execution counts from Status API
 4. Generate a chart and CSV report
 
 ### What You'll See
@@ -158,37 +157,35 @@ Configuration:
   NiFi URL: https://nifi.company.com:8443/nifi
   Username: admin
   Process Group ID: abc-123...
-  Days back: 30
+  Verify SSL: False
 
 Connecting to NiFi...
-✓ Connected successfully
+OK Connected successfully
 
-Analyzing processor usage:
+Analyzing processor execution counts:
   Process Group: abc-123...
-  Date Range: 2025-12-07 to 2026-01-06
 
 Phase 1: Getting processors from target process group...
-✓ Found 25 processors
+OK Found 25 processors
 
-Phase 2: Querying provenance (past 30 days)...
-[Progress] Fetching events for 25 processors...
-✓ Found provenance for 25 processors
+Phase 2: Fetching execution statistics...
+OK Retrieved execution counts for 25 processors
 
 Phase 3: Generating reports...
-✓ Saved CSV: processor_usage_abc-123.csv
-✓ Saved plot: processor_usage_abc-123.png
+OK Saved CSV: processor_usage_abc-123.csv
+OK Saved plot: processor_usage_abc-123.png
 
 Summary:
   Total processors: 25
-  Total events: 15,234
-  Unused processors (0 events): 3
-  Low usage processors (<10 events): 5
+  Total executions (all time): 15,234
+  Never executed: 3 processors
+  Low usage (<10 executions): 5 processors
 
-⚠ Processors with 0 events (candidates for pruning):
+WARNING: Processors with 0 executions (candidates for pruning):
   • OldProcessor (UpdateAttribute)
   • TestProcessor (LogMessage)
 
-✓ Analysis complete!
+OK Analysis complete!
 ```
 
 ---
@@ -199,38 +196,37 @@ The tool generates two files:
 
 ### 1. Bar Chart (processor_usage_[ID].png)
 
-A horizontal bar chart showing execution frequency:
+A horizontal bar chart showing execution counts:
 
 **Color coding:**
-- 🟢 **Green bars** = Active processors (≥10 events) - Keep these
-- 🟠 **Orange bars** = Low usage (1-9 events) - Review these
-- 🔴 **Red bars** = Unused (0 events) - **Pruning candidates!**
+- 🔵 **Blue bars** = Active processors (≥10 executions) - Keep these
+- 🟠 **Orange bars** = Low usage (1-9 executions) - Review these
+- 🔴 **Red bars** = Unused (0 executions) - **Pruning candidates!**
 
 **How to read it:**
-- Longer bars = more executions = more important
+- Longer bars = more executions (all-time) = more important
 - Shorter bars = fewer executions = less important
 - Red bars = never executed = probably can be removed
 
 ### 2. CSV Report (processor_usage_[ID].csv)
 
-Spreadsheet with detailed metrics:
+Spreadsheet with execution count metrics:
 
 ```csv
-Processor Name,Processor Type,Event Count,Events per Day
-LogMessage,LogMessage,1250,41.7
-UpdateAttribute,UpdateAttribute,890,29.7
-RouteOnAttribute,RouteOnAttribute,150,5.0
-OldProcessor,UpdateAttribute,0,0.0
+Processor Name,Processor Type,Execution Count (Total)
+LogMessage,LogMessage,1250
+UpdateAttribute,UpdateAttribute,890
+RouteOnAttribute,RouteOnAttribute,150
+OldProcessor,UpdateAttribute,0
 ```
 
 **Columns:**
 - **Processor Name**: The processor's name in NiFi
 - **Processor Type**: The type (LogMessage, UpdateAttribute, etc.)
-- **Event Count**: Total executions in the time period
-- **Events per Day**: Average daily executions
+- **Execution Count (Total)**: Total executions since processor was created
 
 **How to use it:**
-- Sort by "Event Count" to find unused processors
+- Sort by "Execution Count (Total)" to find unused processors
 - Open in Excel/Google Sheets for analysis
 - Share with your team for discussion
 
@@ -260,29 +256,9 @@ OldProcessor,UpdateAttribute,0,0.0
 
 ## Common Usage Scenarios
 
-### Scenario 1: Analyze Different Time Periods
+### Scenario 1: Analyze Multiple Process Groups
 
-**Why:** See if processor usage changes over time
-
-```bash
-# Last week
-python3 analyze.py --days 7
-
-# Last month (default)
-python3 analyze.py --days 30
-
-# Last quarter
-python3 analyze.py --days 90
-
-# Last 6 months
-python3 analyze.py --days 180
-```
-
-**Tip:** Run all four and compare results!
-
-### Scenario 2: Analyze Multiple Process Groups
-
-**Why:** Check usage across different parts of your NiFi flow
+**Why:** Check execution counts across different parts of your NiFi flow
 
 ```bash
 # Production flow
@@ -295,22 +271,16 @@ python3 analyze.py --group-id xyz-789-development
 python3 analyze.py --group-id old-456-legacy
 ```
 
-### Scenario 3: Override Config Settings
+### Scenario 2: Override Config Settings
 
-**Why:** Quickly test different settings without editing config.yaml
+**Why:** Quickly analyze different process groups without editing config.yaml
 
 ```bash
-# Use config.yaml but analyze 60 days
-python3 analyze.py --days 60
-
 # Use config.yaml but different process group
 python3 analyze.py --group-id xyz-different-group
-
-# Override multiple settings
-python3 analyze.py --days 90 --group-id xyz-789
 ```
 
-### Scenario 4: One-Time Analysis Without Config File
+### Scenario 3: One-Time Analysis Without Config File
 
 **Why:** Quick analysis without creating config.yaml
 
@@ -319,22 +289,21 @@ python3 analyze.py \
   --url https://nifi.company.com:8443/nifi \
   --username admin \
   --password mypassword \
-  --group-id abc-123-group-id \
-  --days 30
+  --group-id abc-123-group-id
 ```
 
-### Scenario 5: Custom Output Names
+### Scenario 4: Custom Output Names
 
 **Why:** Save multiple analyses with descriptive names
 
 ```bash
 # Production analysis
-python3 analyze.py --output-prefix production_30days
+python3 analyze.py --output-prefix production_analysis
 
-# Creates: production_30days.png and production_30days.csv
+# Creates: production_analysis.png and production_analysis.csv
 ```
 
-### Scenario 6: Debug Mode
+### Scenario 5: Debug Mode
 
 **Why:** See detailed logs if something goes wrong
 
@@ -511,11 +480,6 @@ Always verify with team before deleting!
 # Basic usage (with config.yaml)
 python3 analyze.py
 
-# Different time periods
-python3 analyze.py --days 7
-python3 analyze.py --days 30
-python3 analyze.py --days 90
-
 # Different process group
 python3 analyze.py --group-id xyz-789
 
@@ -555,13 +519,13 @@ python3 analyze.py --help
 
 ## Tips for Success
 
-1. ✅ **Start with 30 days** - Good baseline for normal operations
-2. ✅ **Run during business hours** - Avoid maintenance windows
-3. ✅ **Compare multiple time periods** - 7, 30, 90 days to see trends
-4. ✅ **Review with team** - Don't prune alone!
-5. ✅ **Document decisions** - Keep notes on why processors were removed
-6. ✅ **Backup before pruning** - Export flow template before deleting
-7. ✅ **Test after pruning** - Verify flow still works correctly
+1. ✅ **Fast results** - Analysis completes in ~5-10 seconds
+2. ✅ **Review with team** - Don't prune alone!
+3. ✅ **Understand limitations** - Execution count is cumulative (all-time), not time-specific
+4. ✅ **Document decisions** - Keep notes on why processors were removed
+5. ✅ **Backup before pruning** - Export flow template before deleting
+6. ✅ **Test after pruning** - Verify flow still works correctly
+7. ✅ **Consider context** - 0 executions might be intentional (DR, error handling)
 
 ---
 
