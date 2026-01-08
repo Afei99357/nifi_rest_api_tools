@@ -204,6 +204,12 @@ class ProcessorUsageAnalyzer:
 
         self.console.print(f"\n[yellow]Phase 3:[/yellow] Generating reports...")
 
+        # Create output directory if it doesn't exist
+        output_path = Path(output_prefix)
+        output_dir = output_path.parent
+        if output_dir and str(output_dir) != '.':
+            output_dir.mkdir(parents=True, exist_ok=True)
+
         # Sort by flowfile output count (highest to lowest)
         sorted_processors = sorted(
             self.processor_event_counts.items(),

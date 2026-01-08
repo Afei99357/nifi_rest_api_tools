@@ -259,6 +259,11 @@ Examples:
                 timestamp_str = datetime.now().strftime('%Y%m%d_%H%M%S')
                 combined_csv_path = f"{output_prefix}_all_flows_{timestamp_str}.csv"
 
+                # Create output directory if it doesn't exist
+                combined_path = Path(combined_csv_path)
+                if combined_path.parent and str(combined_path.parent) != '.':
+                    combined_path.parent.mkdir(parents=True, exist_ok=True)
+
                 with open(combined_csv_path, 'w', newline='') as csvfile:
                     fieldnames = ['snapshot_timestamp', 'server', 'flow_name', 'process_group_id',
                                  'processor_id', 'processor_name', 'processor_type', 'flowFilesOut', 'bytesOut']
