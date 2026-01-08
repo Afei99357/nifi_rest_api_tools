@@ -256,7 +256,85 @@ OldProcessor,UpdateAttribute,0
 
 ## Common Usage Scenarios
 
-### Scenario 1: Analyze Multiple Process Groups
+### Scenario 1: Batch Mode - Analyze Multiple Flows at Once
+
+**Why:** Analyze many NiFi flows in one command, perfect for weekly monitoring or large-scale analysis
+
+**Step 1: Create flows CSV**
+
+Create a CSV file with your flow definitions (e.g., `flows.csv`):
+
+```csv
+id,flow_name
+8c8677c4-29d6-3607-a32e-1234567890ab,Production_Data_Pipeline
+abc-123-def-456-7890-abcdef123456,Development_Testing_Flow
+xyz-789-ghi-012-3456-7890abcdef12,QA_Validation_Flow
+```
+
+**Step 2: Run batch analysis**
+
+```bash
+python3 analyze.py --flows-csv flows.csv
+```
+
+**What you'll get:**
+
+**Per-flow charts:**
+- `processor_usage_Production_Data_Pipeline.png`
+- `processor_usage_Development_Testing_Flow.png`
+- `processor_usage_QA_Validation_Flow.png`
+
+**Combined CSV (Databricks-ready):**
+- `processor_usage_all_flows_20260108_143022.csv`
+
+**Combined CSV Schema:**
+```
+snapshot_timestamp,flow_name,process_group_id,processor_id,processor_name,processor_type,invocations
+2026-01-08 14:30:22,Production_Data_Pipeline,8c8677c4...,proc-id-1,LogMessage,LogMessage,1250
+2026-01-08 14:30:22,Production_Data_Pipeline,8c8677c4...,proc-id-2,UpdateAttribute,UpdateAttribute,890
+...
+```
+
+**Why this is useful:**
+- ✅ Analyze 10+ flows in one run
+- ✅ Combined CSV includes flow_name and timestamp
+- ✅ Upload to Databricks for time-series analysis
+- ✅ Track processor activity trends over weeks/months
+- ✅ Compare activity across different flows
+
+**Example workflow (VDI + Databricks):**
+
+1. **Monday morning on VDI** (where NiFi is accessible):
+   ```bash
+   python3 analyze.py --flows-csv flows.csv
+   ```
+
+2. **Upload to Databricks:**
+   ```bash
+   databricks fs cp processor_usage_all_flows_20260108_143022.csv dbfs:/nifi_analysis/
+   ```
+
+3. **Load in Databricks notebook:**
+   ```python
+   df = spark.read.csv("/dbfs/nifi_analysis/processor_usage_all_flows_20260108_143022.csv",
+                       header=True, inferSchema=True)
+   df.write.format("delta").mode("append").saveAsTable("main.default.nifi_processor_snapshots")
+   ```
+
+4. **Analyze trends over time (SQL):**
+   ```sql
+   -- Find processors inactive in last 7 days
+   WITH recent_activity AS (
+     SELECT flow_name, processor_name,
+            MAX(invocations) - MIN(invocations) as delta
+     FROM main.default.nifi_processor_snapshots
+     WHERE snapshot_timestamp >= current_date() - 7
+     GROUP BY flow_name, processor_name
+   )
+   SELECT * FROM recent_activity WHERE delta = 0;
+   ```
+
+### Scenario 2: Analyze Multiple Process Groups (One at a Time)
 
 **Why:** Check execution counts across different parts of your NiFi flow
 
@@ -271,7 +349,7 @@ python3 analyze.py --group-id xyz-789-development
 python3 analyze.py --group-id old-456-legacy
 ```
 
-### Scenario 2: Override Config Settings
+### Scenario 3: Override Config Settings
 
 **Why:** Quickly analyze different process groups without editing config.yaml
 
@@ -280,7 +358,7 @@ python3 analyze.py --group-id old-456-legacy
 python3 analyze.py --group-id xyz-different-group
 ```
 
-### Scenario 3: One-Time Analysis Without Config File
+### Scenario 4: One-Time Analysis Without Config File
 
 **Why:** Quick analysis without creating config.yaml
 
@@ -292,7 +370,7 @@ python3 analyze.py \
   --group-id abc-123-group-id
 ```
 
-### Scenario 4: Custom Output Names
+### Scenario 5: Custom Output Names
 
 **Why:** Save multiple analyses with descriptive names
 
@@ -303,7 +381,7 @@ python3 analyze.py --output-prefix production_analysis
 # Creates: production_analysis.png and production_analysis.csv
 ```
 
-### Scenario 5: Debug Mode
+### Scenario 6: Debug Mode
 
 **Why:** See detailed logs if something goes wrong
 

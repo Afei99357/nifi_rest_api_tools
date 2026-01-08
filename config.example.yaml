@@ -11,12 +11,20 @@ nifi_url: https://nifi.company.com:8443/nifi
 username: admin
 password: your-password-here
 
-# Process group to analyze
+# Process group to analyze (single-flow mode)
 # Find this in NiFi UI: right-click process group → "Copy ID"
 process_group_id: abc-123-your-process-group-id-here
+
+# OR: Batch mode - analyze multiple flows from CSV
+# CSV format: id,flow_name
+# Example:
+#   id,flow_name
+#   8c8677c4-29d6-3607-a32e-1234567890ab,Production_Data_Pipeline
+#   abc-123-def-456-7890-abcdef123456,Development_Testing_Flow
+# flows_csv_path: flows.csv
 
 # SSL verification
 verify_ssl: false          # Set to true if you have valid SSL certificates
 
 # Output customization (optional)
-# output_prefix: processor_usage_custom_name
+# output_prefix: processor_usage

@@ -6,6 +6,7 @@ processors for pruning decisions.
 """
 
 import csv
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -35,11 +36,13 @@ class ProcessorUsageAnalyzer:
 
         # Analysis results (populated by analyze())
         self.process_group_id: Optional[str] = None
+        self.flow_name: Optional[str] = None  # Flow name for batch mode
+        self.snapshot_timestamp: Optional[datetime] = None  # When analysis ran
         self.processor_event_counts: Dict[str, Dict] = {}
         self.processor_invocation_counts: Dict[str, int] = {}
         self.target_processors: List[Dict] = []
 
-    def analyze(self, process_group_id: str) -> None:
+    def analyze(self, process_group_id: str, flow_name: Optional[str] = None) -> None:
         """
         Analyze processor execution counts for a process group.
 
@@ -50,11 +53,14 @@ class ProcessorUsageAnalyzer:
 
         Args:
             process_group_id: The NiFi process group ID to analyze
+            flow_name: Optional flow name for tracking (used in batch mode)
 
         Raises:
             Exception: If unable to fetch processors or execution counts
         """
         self.process_group_id = process_group_id
+        self.flow_name = flow_name if flow_name else process_group_id[:8]  # Default to short ID
+        self.snapshot_timestamp = datetime.now()
 
         # Phase 1: Display analysis parameters
         self.console.print(f"\n[yellow]Analyzing processor execution counts:[/yellow]")
@@ -124,6 +130,46 @@ class ProcessorUsageAnalyzer:
                 'invocations': self.processor_invocation_counts.get(proc_id, 0),
                 'type': proc_type
             }
+
+    def get_detailed_results(self) -> List[Dict]:
+        """
+        Get detailed results with all metadata for batch export.
+
+        Returns a list of dictionaries with full processor data including
+        snapshot timestamp, flow name, and all processor metrics.
+        Used for creating combined CSV output in batch mode.
+
+        Returns:
+            List of dictionaries with processor data
+
+        Example:
+            [
+                {
+                    'snapshot_timestamp': datetime(2026, 1, 8, 14, 30, 22),
+                    'flow_name': 'Production_Flow',
+                    'process_group_id': '8c8677c4-29d6-...',
+                    'processor_id': 'proc-123',
+                    'processor_name': 'LogMessage',
+                    'processor_type': 'LogMessage',
+                    'invocations': 1250
+                },
+                ...
+            ]
+        """
+        results = []
+
+        for proc_name, data in self.processor_event_counts.items():
+            results.append({
+                'snapshot_timestamp': self.snapshot_timestamp,
+                'flow_name': self.flow_name,
+                'process_group_id': self.process_group_id,
+                'processor_id': data['id'],
+                'processor_name': proc_name,
+                'processor_type': data['type'],
+                'invocations': data['invocations']
+            })
+
+        return results
 
     def generate_report(self, output_prefix: Optional[str] = None) -> None:
         """
