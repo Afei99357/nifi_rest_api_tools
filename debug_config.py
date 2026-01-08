@@ -26,7 +26,8 @@ def load_config(config_path: Path) -> Dict[str, Any]:
                 if ':' in line:
                     key, value = line.split(':', 1)
                     key = key.strip()
-                    value = value.strip().strip('"').strip("'")
+                    # Strip inline comments (everything after #)
+                    value = value.split('#')[0].strip().strip('"').strip("'")
                     config[key] = value
     except Exception as e:
         print(f"ERROR: Failed to parse config file: {e}")
