@@ -238,7 +238,9 @@ Examples:
                     analyzer.analyze(flow_id, flow_name=flow_name, server=server)
 
                     # Generate individual chart
-                    chart_prefix = f"{output_prefix}_{flow_name}"
+                    # Sanitize flow name for filename (replace spaces and special chars)
+                    safe_flow_name = flow_name.replace(' ', '_').replace('/', '_').replace('\\', '_')
+                    chart_prefix = f"{output_prefix}_{safe_flow_name}"
                     analyzer.generate_report(chart_prefix)
 
                     # Collect detailed results
