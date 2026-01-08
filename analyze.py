@@ -130,6 +130,10 @@ Examples:
         help='Output file prefix (default: processor_usage_[GROUP_ID])'
     )
     parser.add_argument(
+        '--server',
+        help='Server identifier (e.g., hostname, environment name like "prod", "dev")'
+    )
+    parser.add_argument(
         '--verbose',
         action='store_true',
         help='Enable verbose logging'
@@ -152,6 +156,7 @@ Examples:
     password = args.password or config.get('password')
     group_id = args.group_id or config.get('process_group_id')
     flows_csv = args.flows_csv or config.get('flows_csv_path')
+    server = args.server or config.get('server', 'unknown')
     verify_ssl = not args.no_verify_ssl and config.get('verify_ssl', 'false').lower() != 'false'
     output_prefix = args.output_prefix or config.get('output_prefix', 'processor_usage')
 
@@ -230,7 +235,7 @@ Examples:
                 console.print(f"[yellow]({i}/{len(flows)})[/yellow] Analyzing: [cyan]{flow_name}[/cyan]")
 
                 try:
-                    analyzer.analyze(flow_id, flow_name=flow_name)
+                    analyzer.analyze(flow_id, flow_name=flow_name, server=server)
 
                     # Generate individual chart
                     chart_prefix = f"{output_prefix}_{flow_name}"
@@ -255,8 +260,8 @@ Examples:
                 combined_csv_path = f"{output_prefix}_all_flows_{timestamp_str}.csv"
 
                 with open(combined_csv_path, 'w', newline='') as csvfile:
-                    fieldnames = ['snapshot_timestamp', 'flow_name', 'process_group_id',
-                                 'processor_id', 'processor_name', 'processor_type', 'invocations']
+                    fieldnames = ['snapshot_timestamp', 'server', 'flow_name', 'process_group_id',
+                                 'processor_id', 'processor_name', 'processor_type', 'flowFilesOut', 'bytesOut']
                     writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                     writer.writeheader()
                     writer.writerows(all_results)
@@ -274,7 +279,7 @@ Examples:
             console.print(f"\n[cyan]Single-Flow Mode[/cyan]\n")
 
             analyzer = ProcessorUsageAnalyzer(client=client)
-            analyzer.analyze(group_id)  # No flow_name = uses default
+            analyzer.analyze(group_id, server=server)  # No flow_name = uses default
             analyzer.generate_report(output_prefix=output_prefix)
 
         # Cleanup
