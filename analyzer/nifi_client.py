@@ -343,6 +343,82 @@ class NiFiClient:
         logger.info(f"Group {group_id[:8]}: collected {len(processor_stats)} total processor stats")
         return processor_stats
 
+    def get_processor_activity_from_connections(self, group_id: str) -> Dict[str, Dict[str, Any]]:
+        """
+        Extract processor activity by aggregating connection flowfile counts.
+
+        This method gets connection statistics from the Status API and aggregates
+        them by source processor to calculate total flowfiles processed.
+
+        Args:
+            group_id: Process group ID
+
+        Returns:
+            Dictionary mapping processor name to {flowFilesOut, bytesOut}
+
+        Example:
+            {
+                "PutHDFS": {"flowFilesOut": 1250, "bytesOut": 52000},
+                "FetchSFTP": {"flowFilesOut": 105, "bytesOut": 8000}
+            }
+        """
+        status_data = self.get_process_group_status(group_id)
+        processor_activity = {}
+
+        pg_status = status_data.get("processGroupStatus", {})
+        if not pg_status:
+            logger.warning(f"No 'processGroupStatus' key in response for group {group_id}")
+            return processor_activity
+
+        # Get all connections from current group
+        connections = pg_status.get("aggregateSnapshot", {}).get("connectionStatusSnapshots", [])
+        logger.debug(f"Found {len(connections)} connections in group {group_id[:8]}")
+
+        # Aggregate by source processor
+        for conn in connections:
+            conn_snap = conn.get("connectionStatusSnapshot", {})
+            source = conn_snap.get("sourceName")
+
+            if source:
+                # Initialize if first time seeing this processor
+                if source not in processor_activity:
+                    processor_activity[source] = {
+                        "flowFilesOut": 0,
+                        "bytesOut": 0
+                    }
+
+                # Aggregate outbound metrics
+                processor_activity[source]["flowFilesOut"] += conn_snap.get("flowFilesOut", 0)
+                processor_activity[source]["bytesOut"] += conn_snap.get("bytesOut", 0)
+
+        logger.debug(f"Aggregated activity for {len(processor_activity)} processors")
+
+        # Recurse into child groups
+        child_groups = pg_status.get("processGroupStatus", [])
+        logger.debug(f"Found {len(child_groups)} child groups in {group_id[:8]}")
+
+        for child_pg in child_groups:
+            try:
+                child_id = child_pg["id"]
+                child_name = child_pg.get("name", "unknown")
+                logger.debug(f"Recursing into child group: {child_name} ({child_id[:8]})")
+                child_activity = self.get_processor_activity_from_connections(child_id)
+
+                # Merge child results
+                for proc_name, activity in child_activity.items():
+                    if proc_name not in processor_activity:
+                        processor_activity[proc_name] = activity
+                    else:
+                        processor_activity[proc_name]["flowFilesOut"] += activity["flowFilesOut"]
+                        processor_activity[proc_name]["bytesOut"] += activity["bytesOut"]
+
+                logger.debug(f"Added {len(child_activity)} processors from child group {child_name}")
+            except Exception as e:
+                logger.error(f"Error processing child group: {e}")
+
+        logger.info(f"Group {group_id[:8]}: collected activity for {len(processor_activity)} processors")
+        return processor_activity
+
     def query_provenance(
         self,
         processor_id: Optional[str] = None,

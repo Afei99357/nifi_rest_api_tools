@@ -91,43 +91,44 @@ class ProcessorUsageAnalyzer:
             self.console.print(f"[red]ERROR[/red] Failed to get processors: {e}")
             raise
 
-        # Phase 2: Get processor execution counts (fast, single API call)
+        # Phase 2: Get processor activity from connection flowfile counts
         self.console.print(
-            f"\n[yellow]Phase 2:[/yellow] Fetching execution statistics..."
+            f"\n[yellow]Phase 2:[/yellow] Fetching processor activity from connections..."
         )
 
         try:
-            exec_stats = self.client.get_processor_invocation_counts(process_group_id)
-            # Store invocation counts by processor ID
-            for proc_id, stats in exec_stats.items():
-                self.processor_invocation_counts[proc_id] = stats['invocations']
+            activity_stats = self.client.get_processor_activity_from_connections(process_group_id)
 
-            if len(exec_stats) == 0 and len(self.target_processors) > 0:
+            if len(activity_stats) == 0 and len(self.target_processors) > 0:
                 self.console.print(
-                    f"[yellow]WARNING[/yellow] Retrieved execution counts for {len(exec_stats)} processors "
+                    f"[yellow]WARNING[/yellow] Retrieved activity for {len(activity_stats)} processors "
                     f"(expected {len(self.target_processors)})"
                 )
                 self.console.print(
-                    f"[yellow]Hint:[/yellow] Run with --verbose to see detailed API response structure"
+                    f"[yellow]Hint:[/yellow] This may indicate no connections or run with --verbose for details"
                 )
             else:
                 self.console.print(
-                    f"[green]OK[/green] Retrieved execution counts for {len(exec_stats)} processors"
+                    f"[green]OK[/green] Retrieved activity for {len(activity_stats)} processors"
                 )
         except Exception as e:
-            self.console.print(f"[red]ERROR[/red] Failed to fetch execution counts: {e}")
+            self.console.print(f"[red]ERROR[/red] Failed to fetch processor activity: {e}")
             raise  # Cannot continue without this data
 
-        # Build processor_event_counts from execution counts
+        # Build processor_event_counts from activity stats
         self.processor_event_counts = {}
         for proc in self.target_processors:
             proc_id = proc['id']
             proc_name = proc['component']['name']
             proc_type = proc['component']['type'].split('.')[-1]
 
+            # Get activity data for this processor (default to 0 if not found)
+            activity = activity_stats.get(proc_name, {"flowFilesOut": 0, "bytesOut": 0})
+
             self.processor_event_counts[proc_name] = {
                 'id': proc_id,
-                'invocations': self.processor_invocation_counts.get(proc_id, 0),
+                'flowFilesOut': activity['flowFilesOut'],
+                'bytesOut': activity['bytesOut'],
                 'type': proc_type
             }
 
@@ -151,7 +152,8 @@ class ProcessorUsageAnalyzer:
                     'processor_id': 'proc-123',
                     'processor_name': 'LogMessage',
                     'processor_type': 'LogMessage',
-                    'invocations': 1250
+                    'flowFilesOut': 1250,
+                    'bytesOut': 52000
                 },
                 ...
             ]
@@ -166,7 +168,8 @@ class ProcessorUsageAnalyzer:
                 'processor_id': data['id'],
                 'processor_name': proc_name,
                 'processor_type': data['type'],
-                'invocations': data['invocations']
+                'flowFilesOut': data['flowFilesOut'],
+                'bytesOut': data['bytesOut']
             })
 
         return results
@@ -196,10 +199,10 @@ class ProcessorUsageAnalyzer:
 
         self.console.print(f"\n[yellow]Phase 3:[/yellow] Generating reports...")
 
-        # Sort by execution count (highest to lowest)
+        # Sort by flowfile output count (highest to lowest)
         sorted_processors = sorted(
             self.processor_event_counts.items(),
-            key=lambda x: x[1]['invocations'],
+            key=lambda x: x[1]['flowFilesOut'],
             reverse=True
         )
 
@@ -207,10 +210,10 @@ class ProcessorUsageAnalyzer:
         csv_file = Path(f"{output_prefix}.csv")
         with open(csv_file, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(['Processor Name', 'Processor Type', 'Execution Count (Total)'])
+            writer.writerow(['Processor Name', 'Processor Type', 'FlowFiles Out', 'Bytes Out'])
 
             for name, data in sorted_processors:
-                writer.writerow([name, data['type'], data['invocations']])
+                writer.writerow([name, data['type'], data['flowFilesOut'], data['bytesOut']])
 
         self.console.print(f"[green]OK[/green] Saved CSV: {csv_file}")
 
@@ -218,16 +221,16 @@ class ProcessorUsageAnalyzer:
         fig, ax = plt.subplots(figsize=(12, max(8, len(self.target_processors) * 0.4)))
 
         names = [name for name, _ in sorted_processors]
-        invocations = [data['invocations'] for _, data in sorted_processors]
+        flowfiles_out = [data['flowFilesOut'] for _, data in sorted_processors]
 
         # Color code: red = 0, orange = 1-9, blue = 10+
-        colors = ['red' if i == 0 else 'orange' if i < 10 else 'steelblue' for i in invocations]
+        colors = ['red' if i == 0 else 'orange' if i < 10 else 'steelblue' for i in flowfiles_out]
 
-        ax.barh(names, invocations, color=colors)
-        ax.set_xlabel('Execution Count (Total)', fontsize=12)
+        ax.barh(names, flowfiles_out, color=colors)
+        ax.set_xlabel('FlowFiles Out (Snapshot)', fontsize=12)
         ax.set_ylabel('Processor Name', fontsize=12)
         ax.set_title(
-            f'Processor Execution Count\n'
+            f'Processor Activity (FlowFiles Output)\n'
             f'Process Group: {self.process_group_id[:16] if self.process_group_id else "unknown"}...',
             fontsize=14,
             fontweight='bold'
@@ -244,36 +247,38 @@ class ProcessorUsageAnalyzer:
         plt.close(fig)
 
         # 3. Print summary
-        total_invocations = sum(data['invocations'] for _, data in sorted_processors)
-        unused_count = sum(1 for _, data in sorted_processors if data['invocations'] == 0)
-        low_usage_count = sum(1 for _, data in sorted_processors if 0 < data['invocations'] < 10)
+        total_flowfiles = sum(data['flowFilesOut'] for _, data in sorted_processors)
+        total_bytes = sum(data['bytesOut'] for _, data in sorted_processors)
+        unused_count = sum(1 for _, data in sorted_processors if data['flowFilesOut'] == 0)
+        low_usage_count = sum(1 for _, data in sorted_processors if 0 < data['flowFilesOut'] < 10)
 
         self.console.print(f"\n[cyan]Summary:[/cyan]")
         self.console.print(f"  Total processors: {len(self.target_processors)}")
-        self.console.print(f"  Total executions (all time): {total_invocations:,}")
-        self.console.print(f"  Never executed: {unused_count} processors")
-        self.console.print(f"  Low usage (<10 executions): {low_usage_count} processors")
+        self.console.print(f"  Total flowfiles output (snapshot): {total_flowfiles:,}")
+        self.console.print(f"  Total bytes output (snapshot): {total_bytes:,}")
+        self.console.print(f"  No output: {unused_count} processors")
+        self.console.print(f"  Low output (<10 flowfiles): {low_usage_count} processors")
 
         # Show pruning candidates
         if unused_count > 0:
             self.console.print(
-                f"\n[yellow]WARNING: Processors with 0 executions (candidates for pruning):[/yellow]"
+                f"\n[yellow]WARNING: Processors with 0 flowfile output (candidates for pruning):[/yellow]"
             )
             for name, data in sorted_processors:
-                if data['invocations'] == 0:
+                if data['flowFilesOut'] == 0:
                     self.console.print(f"  • {name} ({data['type']})")
 
         # Show low usage processors
         if low_usage_count > 0:
             self.console.print(
-                f"\n[yellow]WARNING: Processors with low execution count (<10 invocations):[/yellow]"
+                f"\n[yellow]WARNING: Processors with low flowfile output (<10 flowfiles):[/yellow]"
             )
             for name, data in sorted_processors:
-                if 0 < data['invocations'] < 10:
-                    self.console.print(f"  • {name} ({data['type']}): {data['invocations']} executions")
+                if 0 < data['flowFilesOut'] < 10:
+                    self.console.print(f"  • {name} ({data['type']}): {data['flowFilesOut']} flowfiles")
 
         self.console.print(f"\n[green]OK[/green] Analysis complete!")
         self.console.print(f"\n[cyan]Next steps:[/cyan]")
         self.console.print(f"  1. Review the bar chart: {plot_file}")
         self.console.print(f"  2. Review the CSV: {csv_file}")
-        self.console.print(f"  3. Consider pruning unused processors")
+        self.console.print(f"  3. Take snapshots over time to identify inactive processors (deltas)")
