@@ -257,7 +257,22 @@ class NiFiClient:
         # Recursively get processors from child groups
         child_groups = pg_data["processGroupFlow"]["flow"]["processGroups"]
         for child in child_groups:
-            processors.extend(self.list_processors(child["id"]))
+            try:
+                # Try to get ID from top level first, then from component
+                child_id = child.get("id")
+                if not child_id and "component" in child:
+                    child_id = child["component"].get("id")
+
+                if child_id:
+                    logger.debug(f"Recursing into child group: {child_id[:8]}")
+                    child_processors = self.list_processors(child_id)
+                    logger.debug(f"Got {len(child_processors)} processors from child")
+                    processors.extend(child_processors)
+                else:
+                    logger.warning(f"Could not find ID for child group: {child}")
+            except Exception as e:
+                logger.error(f"Error recursing into child group: {e}")
+                continue
 
         return processors
 
@@ -265,13 +280,15 @@ class NiFiClient:
         """
         Get live execution statistics for all processors in a process group.
 
+        Uses recursive=true to get status for all descendant components in one call.
+
         Args:
             group_id: Process group ID (use 'root' for root group)
 
         Returns:
             Process group status data with processor execution counts
         """
-        response = self._request("GET", f"/flow/process-groups/{group_id}/status")
+        response = self._request("GET", f"/flow/process-groups/{group_id}/status?recursive=true")
         return response.json()
 
     def get_processor_invocation_counts(self, group_id: str) -> Dict[str, Dict[str, Any]]:
