@@ -268,14 +268,18 @@ Examples:
 
                 with open(combined_csv_path, 'w', newline='') as csvfile:
                     fieldnames = ['snapshot_timestamp', 'server', 'flow_name', 'process_group_id',
-                                 'processor_id', 'processor_name', 'processor_type', 'flowFilesOut', 'bytesOut']
+                                 'connection_id', 'connection_name', 'connection_group_id',
+                                 'source_id', 'source_name', 'destination_id', 'destination_name',
+                                 'flow_files_in', 'flow_files_out', 'bytes_in', 'bytes_out',
+                                 'input', 'output', 'queued_count', 'queued_bytes', 'queued', 'queued_size',
+                                 'percent_use_count', 'percent_use_bytes', 'stats_last_refreshed']
                     writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                     writer.writeheader()
                     writer.writerows(all_results)
 
                 console.print(f"\n[green]OK Combined results saved:[/green]")
                 console.print(f"  CSV: {combined_csv_path}")
-                console.print(f"  Total processors: {len(all_results)}")
+                console.print(f"  Total connections: {len(all_results)}")
                 console.print(f"  Total flows: {len(flows)}")
                 console.print(f"\n[cyan]Upload this CSV to Databricks for analysis[/cyan]")
             else:

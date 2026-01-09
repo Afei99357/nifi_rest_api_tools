@@ -39,9 +39,8 @@ class ProcessorUsageAnalyzer:
         self.flow_name: Optional[str] = None  # Flow name for batch mode
         self.server: Optional[str] = None  # Server identifier (e.g., hostname)
         self.snapshot_timestamp: Optional[datetime] = None  # When analysis ran
-        self.processor_event_counts: Dict[str, Dict] = {}
-        self.processor_invocation_counts: Dict[str, int] = {}
-        self.target_processors: List[Dict] = []
+        self.connection_statistics: List[Dict] = []  # Connection-level data with ALL fields
+        self.target_processors: List[Dict] = []  # Still needed for processor type info
 
     def analyze(self, process_group_id: str, flow_name: Optional[str] = None, server: Optional[str] = None) -> None:
         """
@@ -94,87 +93,118 @@ class ProcessorUsageAnalyzer:
             self.console.print(f"[red]ERROR[/red] Failed to get processors: {e}")
             raise
 
-        # Phase 2: Get processor activity from connection flowfile counts
+        # Phase 2: Get connection statistics (ALL fields, connection-level)
         self.console.print(
-            f"\n[yellow]Phase 2:[/yellow] Fetching processor activity from connections..."
+            f"\n[yellow]Phase 2:[/yellow] Fetching connection statistics (all fields)..."
         )
 
         try:
-            activity_stats = self.client.get_processor_activity_from_connections(process_group_id)
+            connection_stats = self.client.get_connection_statistics(process_group_id)
 
-            if len(activity_stats) == 0 and len(self.target_processors) > 0:
+            if len(connection_stats) == 0:
                 self.console.print(
-                    f"[yellow]WARNING[/yellow] Retrieved activity for {len(activity_stats)} processors "
-                    f"(expected {len(self.target_processors)})"
+                    f"[yellow]WARNING[/yellow] No connections found in process group"
                 )
                 self.console.print(
-                    f"[yellow]Hint:[/yellow] This may indicate no connections or run with --verbose for details"
+                    f"[yellow]Hint:[/yellow] This may indicate an empty flow or run with --verbose for details"
                 )
             else:
                 self.console.print(
-                    f"[green]OK[/green] Retrieved activity for {len(activity_stats)} processors"
+                    f"[green]OK[/green] Retrieved {len(connection_stats)} connections"
                 )
+
+            # Store raw connection data (no aggregation)
+            self.connection_statistics = connection_stats
+
         except Exception as e:
-            self.console.print(f"[red]ERROR[/red] Failed to fetch processor activity: {e}")
+            self.console.print(f"[red]ERROR[/red] Failed to fetch connection statistics: {e}")
             raise  # Cannot continue without this data
-
-        # Build processor_event_counts from activity stats
-        self.processor_event_counts = {}
-        for proc in self.target_processors:
-            proc_id = proc['id']
-            proc_name = proc['component']['name']
-            proc_type = proc['component']['type'].split('.')[-1]
-
-            # Get activity data for this processor (default to 0 if not found)
-            activity = activity_stats.get(proc_name, {"flowFilesOut": 0, "bytesOut": 0})
-
-            self.processor_event_counts[proc_name] = {
-                'id': proc_id,
-                'flowFilesOut': activity['flowFilesOut'],
-                'bytesOut': activity['bytesOut'],
-                'type': proc_type
-            }
 
     def get_detailed_results(self) -> List[Dict]:
         """
         Get detailed results with all metadata for batch export.
 
-        Returns a list of dictionaries with full processor data including
-        snapshot timestamp, flow name, server, and all processor metrics.
-        Used for creating combined CSV output in batch mode.
+        Returns connection-level data with ALL 24 fields from NiFi Status API.
+        Used for creating combined CSV output and Delta Lake storage in batch mode.
 
         Returns:
-            List of dictionaries with processor data
+            List of dictionaries with connection data (all available fields)
 
         Example:
             [
                 {
-                    'snapshot_timestamp': datetime(2026, 1, 8, 14, 30, 22),
+                    'snapshot_timestamp': datetime(2026, 1, 9, 14, 30, 22),
                     'server': 'prod-nifi-01',
                     'flow_name': 'Production_Flow',
                     'process_group_id': '8c8677c4-29d6-...',
-                    'processor_id': 'proc-123',
-                    'processor_name': 'LogMessage',
-                    'processor_type': 'LogMessage',
-                    'flowFilesOut': 1250,
-                    'bytesOut': 52000
+                    'connection_id': 'conn-abc-123',
+                    'connection_name': 'success',
+                    'connection_group_id': '8c8677c4-...',
+                    'source_id': 'proc-123',
+                    'source_name': 'FetchSFTP',
+                    'destination_id': 'proc-456',
+                    'destination_name': 'PutHDFS',
+                    'flow_files_in': 1250,
+                    'flow_files_out': 1250,
+                    'bytes_in': 52000,
+                    'bytes_out': 52000,
+                    'input': '1,250 (50.8 KB)',
+                    'output': '1,250 (50.8 KB)',
+                    'queued_count': 0,
+                    'queued_bytes': 0,
+                    'queued': '0 (0 bytes)',
+                    'queued_size': '0 bytes',
+                    'percent_use_count': 0,
+                    'percent_use_bytes': 0,
+                    'stats_last_refreshed': '2026-01-09T14:30:22Z'
                 },
                 ...
             ]
         """
         results = []
 
-        for proc_name, data in self.processor_event_counts.items():
+        # Transform connection statistics to include metadata
+        for conn in self.connection_statistics:
             results.append({
+                # Metadata
                 'snapshot_timestamp': self.snapshot_timestamp,
                 'server': self.server,
                 'flow_name': self.flow_name,
                 'process_group_id': self.process_group_id,
-                'processor_id': data['id'],
-                'processor_name': proc_name,
-                'processor_type': data['type'],
-                'flowFilesOut': data['flowFilesOut'],
-                'bytesOut': data['bytesOut']
+
+                # Connection identity
+                'connection_id': conn.get('id'),
+                'connection_name': conn.get('name', ''),
+                'connection_group_id': conn.get('groupId'),
+
+                # Source processor
+                'source_id': conn.get('sourceId'),
+                'source_name': conn.get('sourceName'),
+
+                # Destination processor
+                'destination_id': conn.get('destinationId'),
+                'destination_name': conn.get('destinationName'),
+
+                # Flow metrics (5-minute window)
+                'flow_files_in': conn.get('flowFilesIn', 0),
+                'flow_files_out': conn.get('flowFilesOut', 0),
+                'bytes_in': conn.get('bytesIn', 0),
+                'bytes_out': conn.get('bytesOut', 0),
+                'input': conn.get('input', ''),
+                'output': conn.get('output', ''),
+
+                # Queue metrics (current state)
+                'queued_count': conn.get('queuedCount', 0),
+                'queued_bytes': conn.get('queuedBytes', 0),
+                'queued': conn.get('queued', ''),
+                'queued_size': conn.get('queuedSize', ''),
+
+                # Status indicators
+                'percent_use_count': conn.get('percentUseCount', 0),
+                'percent_use_bytes': conn.get('percentUseBytes', 0),
+
+                # Timestamps
+                'stats_last_refreshed': conn.get('statsLastRefreshed', '')
             })
 
         return results
@@ -191,7 +221,7 @@ class ProcessorUsageAnalyzer:
         Args:
             output_prefix: Prefix for output files (default: processor_usage_[GROUP_ID])
         """
-        if not self.processor_event_counts:
+        if not self.connection_statistics:
             self.console.print(
                 "[red]Error:[/red] No analysis results. Run analyze() first."
             )
@@ -210,26 +240,66 @@ class ProcessorUsageAnalyzer:
         if output_dir and str(output_dir) != '.':
             output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Sort by flowfile output count (highest to lowest)
+        # Sort connections by flowfile output count (highest to lowest)
+        sorted_connections = sorted(
+            self.connection_statistics,
+            key=lambda x: x.get('flowFilesOut', 0),
+            reverse=True
+        )
+
+        # 1. Save to CSV with ALL 24 fields
+        csv_file = Path(f"{output_prefix}.csv")
+        with open(csv_file, 'w', newline='') as f:
+            writer = csv.writer(f)
+            # Write header with all 24 fields
+            writer.writerow([
+                'snapshot_timestamp', 'server', 'flow_name', 'process_group_id',
+                'connection_id', 'connection_name', 'connection_group_id',
+                'source_id', 'source_name', 'destination_id', 'destination_name',
+                'flow_files_in', 'flow_files_out', 'bytes_in', 'bytes_out',
+                'input', 'output', 'queued_count', 'queued_bytes', 'queued', 'queued_size',
+                'percent_use_count', 'percent_use_bytes', 'stats_last_refreshed'
+            ])
+
+            # Write connection data
+            for conn in sorted_connections:
+                writer.writerow([
+                    self.snapshot_timestamp, self.server, self.flow_name, self.process_group_id,
+                    conn.get('id'), conn.get('name', ''), conn.get('groupId'),
+                    conn.get('sourceId'), conn.get('sourceName'),
+                    conn.get('destinationId'), conn.get('destinationName'),
+                    conn.get('flowFilesIn', 0), conn.get('flowFilesOut', 0),
+                    conn.get('bytesIn', 0), conn.get('bytesOut', 0),
+                    conn.get('input', ''), conn.get('output', ''),
+                    conn.get('queuedCount', 0), conn.get('queuedBytes', 0),
+                    conn.get('queued', ''), conn.get('queuedSize', ''),
+                    conn.get('percentUseCount', 0), conn.get('percentUseBytes', 0),
+                    conn.get('statsLastRefreshed', '')
+                ])
+
+        self.console.print(f"[green]OK[/green] Saved CSV: {csv_file}")
+
+        # 2. Generate bar chart (aggregate connections to processor-level for visualization)
+        # Build processor activity by aggregating connections from each source
+        processor_activity = {}
+        for conn in self.connection_statistics:
+            source_name = conn.get('sourceName', 'Unknown')
+            if source_name not in processor_activity:
+                processor_activity[source_name] = {
+                    'flowFilesOut': 0,
+                    'bytesOut': 0
+                }
+            processor_activity[source_name]['flowFilesOut'] += conn.get('flowFilesOut', 0)
+            processor_activity[source_name]['bytesOut'] += conn.get('bytesOut', 0)
+
+        # Sort by flowfile output (highest to lowest)
         sorted_processors = sorted(
-            self.processor_event_counts.items(),
+            processor_activity.items(),
             key=lambda x: x[1]['flowFilesOut'],
             reverse=True
         )
 
-        # 1. Save to CSV
-        csv_file = Path(f"{output_prefix}.csv")
-        with open(csv_file, 'w', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(['Server', 'Processor Name', 'Processor Type', 'FlowFiles Out', 'Bytes Out'])
-
-            for name, data in sorted_processors:
-                writer.writerow([self.server, name, data['type'], data['flowFilesOut'], data['bytesOut']])
-
-        self.console.print(f"[green]OK[/green] Saved CSV: {csv_file}")
-
-        # 2. Generate bar chart
-        fig, ax = plt.subplots(figsize=(12, max(8, len(self.target_processors) * 0.4)))
+        fig, ax = plt.subplots(figsize=(12, max(8, len(sorted_processors) * 0.4)))
 
         names = [name for name, _ in sorted_processors]
         flowfiles_out = [data['flowFilesOut'] for _, data in sorted_processors]
@@ -264,11 +334,19 @@ class ProcessorUsageAnalyzer:
         low_usage_count = sum(1 for _, data in sorted_processors if 0 < data['flowFilesOut'] < 10)
 
         self.console.print(f"\n[cyan]Summary:[/cyan]")
-        self.console.print(f"  Total processors: {len(self.target_processors)}")
+        self.console.print(f"  Total processors: {len(sorted_processors)}")
+        self.console.print(f"  Total connections: {len(self.connection_statistics)}")
         self.console.print(f"  Total flowfiles output (snapshot): {total_flowfiles:,}")
         self.console.print(f"  Total bytes output (snapshot): {total_bytes:,}")
         self.console.print(f"  No output: {unused_count} processors")
         self.console.print(f"  Low output (<10 flowfiles): {low_usage_count} processors")
+
+        # Build processor name -> type lookup from target_processors
+        processor_types = {}
+        for proc in self.target_processors:
+            proc_name = proc['component']['name']
+            proc_type = proc['component']['type'].split('.')[-1]
+            processor_types[proc_name] = proc_type
 
         # Show pruning candidates
         if unused_count > 0:
@@ -277,7 +355,8 @@ class ProcessorUsageAnalyzer:
             )
             for name, data in sorted_processors:
                 if data['flowFilesOut'] == 0:
-                    self.console.print(f"  • {name} ({data['type']})")
+                    proc_type = processor_types.get(name, 'Unknown')
+                    self.console.print(f"  • {name} ({proc_type})")
 
         # Show low usage processors
         if low_usage_count > 0:
@@ -286,7 +365,8 @@ class ProcessorUsageAnalyzer:
             )
             for name, data in sorted_processors:
                 if 0 < data['flowFilesOut'] < 10:
-                    self.console.print(f"  • {name} ({data['type']}): {data['flowFilesOut']} flowfiles")
+                    proc_type = processor_types.get(name, 'Unknown')
+                    self.console.print(f"  • {name} ({proc_type}): {data['flowFilesOut']} flowfiles")
 
         self.console.print(f"\n[green]OK[/green] Analysis complete!")
         self.console.print(f"\n[cyan]Next steps:[/cyan]")

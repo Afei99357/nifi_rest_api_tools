@@ -419,6 +419,110 @@ class NiFiClient:
         logger.info(f"Group {group_id[:8]}: collected activity for {len(processor_activity)} processors")
         return processor_activity
 
+    def get_connection_statistics(self, group_id: str) -> List[Dict[str, Any]]:
+        """
+        Extract ALL connection statistics from Status API (connection-level, not aggregated).
+
+        This method retrieves complete connection data including all available fields:
+        - Connection identity (id, sourceId, destinationId, names)
+        - Flow metrics (flowFilesIn/Out, bytesIn/Out)
+        - Queue metrics (queuedCount, queuedBytes, percentages)
+        - Status indicators and timestamps
+
+        Unlike get_processor_activity_from_connections(), this does NOT aggregate
+        by processor - it returns raw connection-level data for maximum granularity.
+
+        Args:
+            group_id: Process group ID
+
+        Returns:
+            List of connection dictionaries with all available fields
+
+        Example:
+            [
+                {
+                    'id': 'conn-abc-123',
+                    'sourceName': 'FetchSFTP',
+                    'destinationName': 'PutHDFS',
+                    'flowFilesOut': 1250,
+                    'queuedCount': 0,
+                    'percentUseCount': 5,
+                    ...
+                },
+                ...
+            ]
+        """
+        status_data = self.get_process_group_status(group_id)
+        all_connections = []
+
+        pg_status = status_data.get("processGroupStatus", {})
+        if not pg_status:
+            logger.warning(f"No 'processGroupStatus' key in response for group {group_id}")
+            return all_connections
+
+        # Get all connections from current group
+        connection_statuses = pg_status.get("aggregateSnapshot", {}).get("connectionStatusSnapshots", [])
+        logger.debug(f"Found {len(connection_statuses)} connections in group {group_id[:8]}")
+
+        # Extract ALL fields from each connection
+        for conn_status in connection_statuses:
+            conn_snap = conn_status.get("connectionStatusSnapshot", {})
+
+            # Extract all available fields (15+ fields)
+            connection_data = {
+                # Connection identity (7 fields)
+                'id': conn_snap.get('id'),
+                'groupId': conn_snap.get('groupId'),
+                'name': conn_snap.get('name', ''),  # Often empty
+                'sourceId': conn_snap.get('sourceId'),
+                'sourceName': conn_snap.get('sourceName'),
+                'destinationId': conn_snap.get('destinationId'),
+                'destinationName': conn_snap.get('destinationName'),
+
+                # Flow metrics - 5-minute window (6 fields)
+                'flowFilesIn': conn_snap.get('flowFilesIn', 0),
+                'flowFilesOut': conn_snap.get('flowFilesOut', 0),
+                'bytesIn': conn_snap.get('bytesIn', 0),
+                'bytesOut': conn_snap.get('bytesOut', 0),
+                'input': conn_snap.get('input', ''),  # Formatted string like "1,250 (50.8 KB)"
+                'output': conn_snap.get('output', ''),  # Formatted string
+
+                # Queue metrics - current state (4 fields)
+                'queuedCount': conn_snap.get('queuedCount', 0),
+                'queuedBytes': conn_snap.get('queuedBytes', 0),
+                'queued': conn_snap.get('queued', ''),  # Formatted string
+                'queuedSize': conn_snap.get('queuedSize', ''),  # Formatted string
+
+                # Status indicators (2 fields)
+                'percentUseCount': conn_snap.get('percentUseCount', 0),
+                'percentUseBytes': conn_snap.get('percentUseBytes', 0),
+
+                # Timestamps (1 field)
+                'statsLastRefreshed': conn_snap.get('statsLastRefreshed', ''),
+            }
+
+            all_connections.append(connection_data)
+
+        logger.debug(f"Extracted {len(all_connections)} connection records")
+
+        # Recursively process child groups
+        child_groups = pg_status.get("processGroupStatus", [])
+        logger.debug(f"Found {len(child_groups)} child groups in {group_id[:8]}")
+
+        for child_pg in child_groups:
+            try:
+                child_id = child_pg["id"]
+                child_name = child_pg.get("name", "unknown")
+                logger.debug(f"Recursing into child group: {child_name} ({child_id[:8]})")
+                child_connections = self.get_connection_statistics(child_id)
+                all_connections.extend(child_connections)
+                logger.debug(f"Added {len(child_connections)} connections from child group {child_name}")
+            except Exception as e:
+                logger.error(f"Error processing child group: {e}")
+
+        logger.info(f"Group {group_id[:8]}: collected {len(all_connections)} total connections")
+        return all_connections
+
     def query_provenance(
         self,
         processor_id: Optional[str] = None,
